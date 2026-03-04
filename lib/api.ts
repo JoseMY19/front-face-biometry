@@ -1,6 +1,6 @@
 import type { Person, CompareResponse, HistoryItem } from "@/types";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/+$/, "");
 
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -59,5 +59,6 @@ export async function getHistory(): Promise<HistoryItem[]> {
 
 export function photoUrl(path: string): string {
   if (path.startsWith("http")) return path;
-  return `${API_BASE}${path}`;
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return `${API_BASE}${normalizedPath}`;
 }
