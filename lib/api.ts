@@ -21,10 +21,10 @@ export async function getPersons(): Promise<Person[]> {
   return handleResponse<Person[]>(res);
 }
 
-export async function addPerson(name: string, photo: File): Promise<Person> {
+export async function addPerson(name:string,photo:File): Promise<Person> {
   const form = new FormData();
   form.append("name", name);
-  form.append("photo", photo);
+  form.append("photos", photo);
   const res = await fetch(`${API_BASE}/api/persons`, { method: "POST", body: form });
   return handleResponse<Person>(res);
 }
