@@ -2,14 +2,15 @@
 
 import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
-import { History, Loader2, Glasses, CheckCircle, XCircle } from "lucide-react";
-import { getHistory, photoUrl } from "@/lib/api";
+import { History, Loader2, Glasses, CheckCircle, XCircle, Trash2 } from "lucide-react";
+import { getHistory, deleteComparison, deleteAllHistory, photoUrl } from "@/lib/api";
 import type { HistoryItem } from "@/types";
 import clsx from "clsx";
 
 export default function HistoryPage() {
   const [items, setItems] = useState<HistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deletingAll, setDeletingAll] = useState(false);
 
   useEffect(() => {
     getHistory()
@@ -18,16 +19,57 @@ export default function HistoryPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  async function handleDeleteAll() {
+    if (!confirm(`¿Eliminar todo el historial (${items.length} comparaciones)?`)) return;
+    setDeletingAll(true);
+    try {
+      const { deleted } = await deleteAllHistory();
+      setItems([]);
+      toast.success(`${deleted} comparación(es) eliminadas`);
+    } catch {
+      toast.error("Error al eliminar el historial");
+    } finally {
+      setDeletingAll(false);
+    }
+  }
+
+  async function handleDeleteOne(id: number) {
+    try {
+      await deleteComparison(id);
+      setItems((prev) => prev.filter((i) => i.id !== id));
+      toast.success("Comparación eliminada");
+    } catch {
+      toast.error("Error al eliminar");
+    }
+  }
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold flex items-center gap-2.5">
-          <History className="w-6 h-6 text-blue-400" />
-          Historial de comparaciones
-        </h1>
-        <p className="text-slate-400 text-sm mt-1">
-          Últimas {items.length} comparaciones realizadas
-        </p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2.5">
+            <History className="w-6 h-6 text-blue-400" />
+            Historial de comparaciones
+          </h1>
+          <p className="text-slate-400 text-sm mt-1">
+            Últimas {items.length} comparaciones realizadas
+          </p>
+        </div>
+
+        {items.length > 0 && (
+          <button
+            onClick={handleDeleteAll}
+            disabled={deletingAll}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition text-sm disabled:opacity-50"
+          >
+            {deletingAll ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Trash2 className="w-4 h-4" />
+            )}
+            Borrar todo
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -43,7 +85,7 @@ export default function HistoryPage() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {items.map((item) => (
-            <HistoryCard key={item.id} item={item} />
+            <HistoryCard key={item.id} item={item} onDelete={handleDeleteOne} />
           ))}
         </div>
       )}
@@ -51,8 +93,16 @@ export default function HistoryPage() {
   );
 }
 
-function HistoryCard({ item }: { item: HistoryItem }) {
-  const isMatch = item.best_match_score != null && item.best_match_score >= 32;
+function HistoryCard({
+  item,
+  onDelete,
+}: {
+  item: HistoryItem;
+  onDelete: (id: number) => void;
+}) {
+  const isMatch = item.best_match_score != null && item.best_match_score >= 75;
+  const [deleting, setDeleting] = useState(false);
+
   const date = new Date(item.created_at).toLocaleString("es", {
     day: "2-digit",
     month: "short",
@@ -60,6 +110,12 @@ function HistoryCard({ item }: { item: HistoryItem }) {
     hour: "2-digit",
     minute: "2-digit",
   });
+
+  async function handleDelete() {
+    setDeleting(true);
+    await onDelete(item.id);
+    setDeleting(false);
+  }
 
   return (
     <div className="card p-4 space-y-3">
@@ -90,11 +146,25 @@ function HistoryCard({ item }: { item: HistoryItem }) {
 
         <div className="flex items-center justify-between">
           <span className="text-xs text-slate-500">{date}</span>
-          {item.has_glasses && (
-            <span className="flex items-center gap-1 text-xs text-amber-400">
-              <Glasses className="w-3 h-3" /> Lentes
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            {item.has_glasses && (
+              <span className="flex items-center gap-1 text-xs text-amber-400">
+                <Glasses className="w-3 h-3" /> Lentes
+              </span>
+            )}
+            <button
+              onClick={handleDelete}
+              disabled={deleting}
+              className="text-slate-600 hover:text-red-400 transition"
+              title="Eliminar"
+            >
+              {deleting ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Trash2 className="w-3.5 h-3.5" />
+              )}
+            </button>
+          </div>
         </div>
       </div>
     </div>

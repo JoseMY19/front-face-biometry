@@ -55,6 +55,16 @@ export async function getHistory(): Promise<HistoryItem[]> {
   return handleResponse<HistoryItem[]>(res);
 }
 
+export async function deleteComparison(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/history/${id}`, { method: "DELETE" });
+  await handleResponse<unknown>(res);
+}
+
+export async function deleteAllHistory(): Promise<{ deleted: number }> {
+  const res = await fetch(`${API_BASE}/api/history`, { method: "DELETE" });
+  return handleResponse<{ deleted: number }>(res);
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 export function photoUrl(path: string): string {
