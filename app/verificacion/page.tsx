@@ -3,46 +3,33 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, User, Sun, SwitchCamera, Loader2, Camera, Check } from "lucide-react";
+import { ArrowLeft, User, Sun, SwitchCamera, Fingerprint, Loader2, Camera, X } from "lucide-react";
 import DecoratedBackground from "@/components/DecoratedBackground";
 import logo from "@/src/assets/logo/logo.webp";
 import { useState, useRef, useCallback, useEffect } from "react";
 import toast from "react-hot-toast";
 import { comparePhoto } from "@/lib/api";
 
-type CameraState = "loading" | "ready" | "error";
-type DetectionState = "searching" | "detected" | "countdown" | "captured";
+type Step = "live" | "preview" | "processing";
 
 export default function VerificationPage() {
   const router = useRouter();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const detectorRef = useRef<unknown>(null);
-  const detectionLoopRef = useRef<number | null>(null);
-  const countdownRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const [cameraState, setCameraState] = useState<CameraState>("loading");
-  const [processing, setProcessing] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [errorMsg, setErrorMsg] = useState("");
+  const [step, setStep] = useState<Step>("live");
+  const [cameraReady, setCameraReady] = useState(false);
+  const [cameraError, setCameraError] = useState("");
   const [facingMode, setFacingMode] = useState<"user" | "environment">("user");
   const [torchOn, setTorchOn] = useState(false);
   const [torchSupported, setTorchSupported] = useState(false);
-  const [detection, setDetection] = useState<DetectionState>("searching");
-  const [countdown, setCountdown] = useState(0);
-  const [faceGuide, setFaceGuide] = useState<string>("Buscando rostro...");
+  const [progress, setProgress] = useState(0);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [capturedBlob, setCapturedBlob] = useState<Blob | null>(null);
 
   // ── Stop camera ──
   const stopCamera = useCallback(() => {
-    if (detectionLoopRef.current) {
-      cancelAnimationFrame(detectionLoopRef.current);
-      detectionLoopRef.current = null;
-    }
-    if (countdownRef.current) {
-      clearTimeout(countdownRef.current);
-      countdownRef.current = null;
-    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
@@ -51,116 +38,10 @@ export default function VerificationPage() {
     setTorchSupported(false);
   }, []);
 
-  // ── Face detection loop ──
-  const startDetectionLoop = useCallback(() => {
-    // Use browser FaceDetector API (Chrome/Edge)
-    const FaceDetectorClass = (window as unknown as Record<string, unknown>).FaceDetector as
-      | (new (opts?: Record<string, unknown>) => { detect: (source: HTMLVideoElement) => Promise<Array<{ boundingBox: DOMRect }>> })
-      | undefined;
-
-    if (!FaceDetectorClass) {
-      // FaceDetector not supported — auto-capture after 3s
-      setFaceGuide("Centra tu rostro y espera...");
-      setDetection("detected");
-      let count = 3;
-      setCountdown(count);
-      setDetection("countdown");
-
-      const tick = () => {
-        count--;
-        if (count <= 0) {
-          setDetection("captured");
-          setCountdown(0);
-          return;
-        }
-        setCountdown(count);
-        countdownRef.current = setTimeout(tick, 1000);
-      };
-      countdownRef.current = setTimeout(tick, 1000);
-      return;
-    }
-
-    const detector = new FaceDetectorClass({ fastMode: true, maxDetectedFaces: 1 });
-    detectorRef.current = detector;
-
-    let stableFrames = 0;
-    const STABLE_THRESHOLD = 8; // ~8 frames of stable face = start countdown
-
-    const loop = async () => {
-      if (!videoRef.current || videoRef.current.readyState < 2) {
-        detectionLoopRef.current = requestAnimationFrame(loop);
-        return;
-      }
-
-      try {
-        const faces = await detector.detect(videoRef.current);
-
-        if (faces.length > 0) {
-          const face = faces[0];
-          const vw = videoRef.current.videoWidth;
-          const vh = videoRef.current.videoHeight;
-          const box = face.boundingBox;
-
-          // Check face is reasonably centered and sized
-          const centerX = (box.x + box.width / 2) / vw;
-          const centerY = (box.y + box.height / 2) / vh;
-          const faceRatio = (box.width * box.height) / (vw * vh);
-
-          const isCentered = centerX > 0.25 && centerX < 0.75 && centerY > 0.2 && centerY < 0.8;
-          const isGoodSize = faceRatio > 0.04; // Face covers at least 4% of frame
-
-          if (isCentered && isGoodSize) {
-            stableFrames++;
-            setDetection("detected");
-            setFaceGuide("Rostro detectado, no te muevas");
-
-            if (stableFrames >= STABLE_THRESHOLD) {
-              // Start countdown
-              setDetection("countdown");
-              let count = 3;
-              setCountdown(count);
-
-              const tick = () => {
-                count--;
-                if (count <= 0) {
-                  setDetection("captured");
-                  setCountdown(0);
-                  return;
-                }
-                setCountdown(count);
-                countdownRef.current = setTimeout(tick, 1000);
-              };
-              countdownRef.current = setTimeout(tick, 1000);
-              return; // Stop detection loop
-            }
-          } else {
-            stableFrames = Math.max(0, stableFrames - 2);
-            setDetection("searching");
-            if (!isCentered) setFaceGuide("Centra tu rostro en el recuadro");
-            else if (!isGoodSize) setFaceGuide("Acércate más a la cámara");
-          }
-        } else {
-          stableFrames = 0;
-          setDetection("searching");
-          setFaceGuide("Buscando rostro...");
-        }
-      } catch {
-        // Detection failed silently, retry
-      }
-
-      detectionLoopRef.current = requestAnimationFrame(loop);
-    };
-
-    detectionLoopRef.current = requestAnimationFrame(loop);
-  }, []);
-
   // ── Start camera ──
   const startCamera = useCallback(async (facing: "user" | "environment") => {
-    setCameraState("loading");
-    setErrorMsg("");
-    setDetection("searching");
-    setCountdown(0);
-    setFaceGuide("Buscando rostro...");
+    setCameraReady(false);
+    setCameraError("");
     stopCamera();
 
     try {
@@ -185,13 +66,9 @@ export default function VerificationPage() {
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        videoRef.current.onloadeddata = () => {
-          setCameraState("ready");
-          startDetectionLoop();
-        };
+        videoRef.current.onloadeddata = () => setCameraReady(true);
       }
     } catch (err: unknown) {
-      console.error("Camera error:", err);
       let msg = "No se pudo acceder a la cámara.";
       if (err instanceof Error && err.message === "notsupported") {
         msg = "Tu navegador no soporta acceso a la cámara.";
@@ -203,35 +80,30 @@ export default function VerificationPage() {
           case "NotReadableError": msg = "La cámara no respondió. Puede estar en uso por otra app."; break;
         }
       }
-      setErrorMsg(msg);
-      setCameraState("error");
+      setCameraError(msg);
     }
-  }, [stopCamera, startDetectionLoop]);
+  }, [stopCamera]);
 
   // ── Init camera ──
   useEffect(() => {
-    startCamera(facingMode);
+    if (step === "live") {
+      startCamera(facingMode);
+    }
     return stopCamera;
-  }, [facingMode, startCamera, stopCamera]);
-
-  // ── Auto-capture when detection says "captured" ──
-  useEffect(() => {
-    if (detection !== "captured" || processing) return;
-    captureAndSend();
-  }, [detection]);
+  }, [facingMode, step, startCamera, stopCamera]);
 
   // ── Progress animation ──
   useEffect(() => {
-    if (!processing) { setProgress(0); return; }
+    if (step !== "processing") { setProgress(0); return; }
     const interval = setInterval(() => {
       setProgress((p) => (p >= 95 ? 95 : p + Math.random() * 8 + 2));
     }, 300);
     return () => clearInterval(interval);
-  }, [processing]);
+  }, [step]);
 
-  // ── Capture and send ──
-  const captureAndSend = useCallback(async () => {
-    if (!videoRef.current || !canvasRef.current || processing) return;
+  // ── Step 1: Capture photo ──
+  const handleCapture = useCallback(() => {
+    if (!videoRef.current || !canvasRef.current) return;
 
     const video = videoRef.current;
     const canvas = canvasRef.current;
@@ -246,16 +118,29 @@ export default function VerificationPage() {
     }
     ctx.drawImage(video, 0, 0);
 
-    const blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, "image/jpeg", 0.92)
-    );
-    if (!blob) { toast.error("No se pudo capturar"); return; }
+    // Generate preview
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+    setPreviewUrl(dataUrl);
 
-    setProcessing(true);
+    // Generate blob
+    canvas.toBlob((blob) => {
+      if (blob) setCapturedBlob(blob);
+    }, "image/jpeg", 0.92);
+
+    // Stop camera to free resources
+    stopCamera();
+    setStep("preview");
+  }, [facingMode, stopCamera]);
+
+  // ── Step 2: Send to backend ──
+  const handleAnalyze = useCallback(async () => {
+    if (!capturedBlob) return;
+
+    setStep("processing");
     const toastId = toast.loading("Verificando identidad...");
 
     try {
-      const data = await comparePhoto(blob);
+      const data = await comparePhoto(capturedBlob);
       setProgress(100);
       sessionStorage.setItem("verificationResult", JSON.stringify(data));
       toast.success("Verificación completada", { id: toastId });
@@ -263,13 +148,18 @@ export default function VerificationPage() {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Error en la verificación";
       toast.error(message, { id: toastId });
-      setProcessing(false);
-      // Restart detection
-      setDetection("searching");
-      setCountdown(0);
-      startDetectionLoop();
+      // Go back to preview so they can retry
+      setStep("preview");
     }
-  }, [processing, facingMode, router, startDetectionLoop]);
+  }, [capturedBlob, router]);
+
+  // ── Retake: discard and go back to live ──
+  const handleRetake = () => {
+    setCapturedBlob(null);
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl(null);
+    setStep("live");
+  };
 
   // ── Toggle torch ──
   const toggleTorch = useCallback(async () => {
@@ -290,12 +180,16 @@ export default function VerificationPage() {
     setFacingMode((prev) => (prev === "user" ? "environment" : "user"));
   };
 
-  // ── Border color based on detection state ──
-  const borderColor =
-    detection === "searching" ? "border-[#00a859]" :
-    detection === "detected" ? "border-[#facc15]" :
-    detection === "countdown" ? "border-[#22c55e]" :
-    "border-[#22c55e]";
+  // ── Main button handler ──
+  const handleMainButton = () => {
+    if (step === "live") handleCapture();
+    else if (step === "preview") handleAnalyze();
+  };
+
+  const mainButtonEnabled =
+    (step === "live" && cameraReady) ||
+    (step === "preview" && capturedBlob !== null) ||
+    false; // processing handled by step check
 
   return (
     <main className="min-h-[100dvh] relative flex flex-col bg-white text-slate-800">
@@ -327,76 +221,68 @@ export default function VerificationPage() {
           </p>
         </div>
 
-        {/* Status indicator */}
+        {/* Instructions */}
         <div className="flex flex-col items-center mb-4 sm:mb-6">
-          <div className={`w-14 h-14 sm:w-16 sm:h-16 rounded-full flex items-center justify-center mb-3 transition-colors duration-300 ${
-            detection === "searching" ? "bg-[#ebfcf1]" :
-            detection === "detected" ? "bg-[#fef9c3]" :
-            detection === "countdown" ? "bg-[#dcfce7]" :
-            "bg-[#dcfce7]"
-          }`}>
-            {detection === "countdown" ? (
-              <span className="text-2xl font-black text-[#16a34a]">{countdown}</span>
-            ) : detection === "captured" || processing ? (
-              <Check className="w-7 h-7 sm:w-8 sm:h-8 text-[#16a34a]" />
-            ) : (
-              <User className="w-7 h-7 sm:w-8 sm:h-8 text-[#00a859]" />
-            )}
+          <div className="w-14 h-14 sm:w-16 sm:h-16 bg-[#ebfcf1] rounded-full flex items-center justify-center mb-3">
+            <User className="w-7 h-7 sm:w-8 sm:h-8 text-[#00a859]" />
           </div>
           <h2 className="text-lg sm:text-xl font-bold text-[#0f172a]">
-            {processing ? "Analizando..." : detection === "countdown" ? "No te muevas" : "Centra tu rostro"}
+            {step === "live" ? "Centra tu rostro" : step === "preview" ? "Foto capturada" : "Analizando..."}
           </h2>
           <p className="text-[#64748b] text-xs sm:text-sm mt-1">
-            {processing ? "Verificando identidad" : faceGuide}
+            {step === "live" && "Mantén una expresión neutral y captura"}
+            {step === "preview" && "Presiona el botón verde para verificar"}
+            {step === "processing" && "Verificando identidad"}
           </p>
         </div>
 
-        {/* Camera Area */}
+        {/* Viewfinder */}
         <div className="relative w-full aspect-square max-w-[280px] sm:max-w-[320px] mx-auto mb-6 sm:mb-8">
-          {/* Corner brackets - color changes with detection */}
-          <div className={`absolute -top-1 -left-1 w-7 h-7 sm:w-8 sm:h-8 border-t-4 border-l-4 ${borderColor} rounded-tl-xl z-20 transition-colors duration-300`} />
-          <div className={`absolute -top-1 -right-1 w-7 h-7 sm:w-8 sm:h-8 border-t-4 border-r-4 ${borderColor} rounded-tr-xl z-20 transition-colors duration-300`} />
-          <div className={`absolute -bottom-1 -left-1 w-7 h-7 sm:w-8 sm:h-8 border-b-4 border-l-4 ${borderColor} rounded-bl-xl z-20 transition-colors duration-300`} />
-          <div className={`absolute -bottom-1 -right-1 w-7 h-7 sm:w-8 sm:h-8 border-b-4 border-r-4 ${borderColor} rounded-br-xl z-20 transition-colors duration-300`} />
+          {/* Corner brackets */}
+          <div className={`absolute -top-1 -left-1 w-7 h-7 sm:w-8 sm:h-8 border-t-4 border-l-4 rounded-tl-xl z-20 transition-colors ${step === "preview" ? "border-[#22c55e]" : "border-[#00a859]"}`} />
+          <div className={`absolute -top-1 -right-1 w-7 h-7 sm:w-8 sm:h-8 border-t-4 border-r-4 rounded-tr-xl z-20 transition-colors ${step === "preview" ? "border-[#22c55e]" : "border-[#00a859]"}`} />
+          <div className={`absolute -bottom-1 -left-1 w-7 h-7 sm:w-8 sm:h-8 border-b-4 border-l-4 rounded-bl-xl z-20 transition-colors ${step === "preview" ? "border-[#22c55e]" : "border-[#00a859]"}`} />
+          <div className={`absolute -bottom-1 -right-1 w-7 h-7 sm:w-8 sm:h-8 border-b-4 border-r-4 rounded-br-xl z-20 transition-colors ${step === "preview" ? "border-[#22c55e]" : "border-[#00a859]"}`} />
 
           <div className="absolute inset-2 bg-[#2a2d2f] rounded-2xl overflow-hidden flex items-center justify-center shadow-inner">
-            {cameraState === "error" ? (
-              <div className="flex flex-col items-center gap-2 text-slate-400 px-4 text-center">
-                <Camera className="w-10 h-10 text-slate-500" />
-                <p className="text-xs leading-tight">{errorMsg}</p>
-                <button onClick={() => startCamera(facingMode)} className="mt-1 text-[#00a859] text-xs font-bold underline">
-                  Reintentar
-                </button>
-              </div>
-            ) : (
+            {/* Live camera */}
+            {step === "live" && (
               <>
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className="absolute inset-0 w-full h-full object-cover"
-                  style={{ transform: facingMode === "user" ? "scaleX(-1)" : "none" }}
-                />
-                {cameraState === "loading" && (
-                  <div className="absolute inset-0 bg-[#2a2d2f] flex items-center justify-center z-10">
-                    <Loader2 className="w-8 h-8 text-[#00a859] animate-spin" />
+                {cameraError ? (
+                  <div className="flex flex-col items-center gap-2 text-slate-400 px-4 text-center">
+                    <Camera className="w-10 h-10 text-slate-500" />
+                    <p className="text-xs leading-tight">{cameraError}</p>
+                    <button onClick={() => startCamera(facingMode)} className="mt-1 text-[#00a859] text-xs font-bold underline">
+                      Reintentar
+                    </button>
                   </div>
-                )}
-
-                {/* Countdown overlay */}
-                {detection === "countdown" && (
-                  <div className="absolute inset-0 flex items-center justify-center z-10">
-                    <div className="w-20 h-20 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center">
-                      <span className="text-4xl font-black text-white">{countdown}</span>
-                    </div>
-                  </div>
+                ) : (
+                  <>
+                    <video
+                      ref={videoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="absolute inset-0 w-full h-full object-cover"
+                      style={{ transform: facingMode === "user" ? "scaleX(-1)" : "none" }}
+                    />
+                    {!cameraReady && (
+                      <div className="absolute inset-0 bg-[#2a2d2f] flex items-center justify-center z-10">
+                        <Loader2 className="w-8 h-8 text-[#00a859] animate-spin" />
+                      </div>
+                    )}
+                  </>
                 )}
               </>
             )}
 
+            {/* Preview of captured photo */}
+            {(step === "preview" || step === "processing") && previewUrl && (
+              <img src={previewUrl} alt="Captura" className="absolute inset-0 w-full h-full object-cover" />
+            )}
+
             {/* Scan overlay when processing */}
-            {processing && (
+            {step === "processing" && (
               <>
                 <div className="absolute inset-4 border-2 border-[#00a859]/30 rounded-full z-10" />
                 <div className="absolute inset-8 border border-[#00a859]/20 border-dashed rounded-full z-10" />
@@ -408,10 +294,20 @@ export default function VerificationPage() {
               </>
             )}
           </div>
+
+          {/* Retake button on preview */}
+          {step === "preview" && (
+            <button
+              onClick={handleRetake}
+              className="absolute -top-2 -right-2 w-8 h-8 bg-[#ef4444] rounded-full flex items-center justify-center text-white shadow-lg z-30 active:scale-90 transition-transform"
+            >
+              <X className="w-4 h-4 stroke-[3]" />
+            </button>
+          )}
         </div>
 
         {/* Progress Bar */}
-        {processing && (
+        {step === "processing" && (
           <div className="mb-8 sm:mb-10 w-full max-w-[280px] sm:max-w-[320px] mx-auto animate-fade-in">
             <div className="flex justify-between items-center mb-2">
               <div className="flex items-center gap-2">
@@ -431,10 +327,10 @@ export default function VerificationPage() {
 
         {/* Bottom Actions */}
         <div className="flex justify-center items-center gap-5 sm:gap-6 mt-auto pb-4">
-          {/* Torch */}
+          {/* Left button: Torch (live) or hidden (preview/processing) */}
           <button
-            onClick={toggleTorch}
-            disabled={!torchSupported || processing}
+            onClick={step === "live" ? toggleTorch : undefined}
+            disabled={step !== "live" || !torchSupported}
             className={`w-12 h-12 sm:w-14 sm:h-14 rounded-full border flex items-center justify-center transition-all shadow-sm active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed ${
               torchOn
                 ? "bg-[#fef9c3] border-[#facc15] text-[#a16207]"
@@ -444,31 +340,24 @@ export default function VerificationPage() {
             <Sun className="w-5 h-5 sm:w-6 sm:h-6" />
           </button>
 
-          {/* Status indicator (replaces capture button) */}
-          <div
-            className={`rounded-full flex items-center justify-center text-white transition-all shadow-lg ${
-              processing ? "bg-[#00a859] shadow-green-500/30" :
-              detection === "countdown" ? "bg-[#22c55e] shadow-green-500/30 animate-pulse" :
-              detection === "detected" ? "bg-[#eab308] shadow-yellow-500/30" :
-              "bg-[#00a859]/60 shadow-green-500/20"
-            }`}
+          {/* Main button: Capture (live) → Analyze (preview) */}
+          <button
+            onClick={handleMainButton}
+            disabled={!mainButtonEnabled}
+            className="rounded-full bg-[#00a859] flex items-center justify-center text-white hover:bg-[#00924d] active:scale-95 transition-all shadow-lg shadow-green-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ width: "4.5rem", height: "4.5rem" }}
           >
-            {processing ? (
+            {step === "processing" ? (
               <Loader2 className="w-9 h-9 animate-spin" />
-            ) : detection === "countdown" ? (
-              <span className="text-2xl font-black">{countdown}</span>
-            ) : detection === "detected" ? (
-              <User className="w-9 h-9" />
             ) : (
-              <User className="w-9 h-9 opacity-50" />
+              <Fingerprint className="w-9 h-9 sm:w-10 sm:h-10" />
             )}
-          </div>
+          </button>
 
-          {/* Switch camera */}
+          {/* Right button: Switch camera (live) or Retake (preview) */}
           <button
-            onClick={switchCamera}
-            disabled={processing}
+            onClick={step === "live" ? switchCamera : step === "preview" ? handleRetake : undefined}
+            disabled={step === "processing"}
             className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-[#f8fafc] border border-slate-200 flex items-center justify-center text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-all shadow-sm active:scale-95 disabled:opacity-50"
           >
             <SwitchCamera className="w-5 h-5 sm:w-6 sm:h-6" />
