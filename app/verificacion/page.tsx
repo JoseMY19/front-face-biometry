@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, User, Sun, RefreshCcw, Fingerprint, Loader2, Camera, Upload } from "lucide-react";
+import { ArrowLeft, User, Sun, SwitchCamera, Fingerprint, Loader2, Camera } from "lucide-react";
 import DecoratedBackground from "@/components/DecoratedBackground";
 import logo from "@/src/assets/logo/logo.webp";
 import { useState, useRef, useCallback, useEffect } from "react";
@@ -11,33 +11,33 @@ import toast from "react-hot-toast";
 import { comparePhoto } from "@/lib/api";
 
 type CameraState = "loading" | "ready" | "error";
-type Mode = "camera" | "upload";
 
 export default function VerificationPage() {
   const router = useRouter();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [cameraState, setCameraState] = useState<CameraState>("loading");
-  const [mode, setMode] = useState<Mode>("camera");
   const [processing, setProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [selectedFile, setSelectedFile] = useState<Blob | null>(null);
-  const [isMirrored, setIsMirrored] = useState(true);
+  const [facingMode, setFacingMode] = useState<"user" | "environment">("user");
+  const [torchOn, setTorchOn] = useState(false);
+  const [torchSupported, setTorchSupported] = useState(false);
 
-  // ── Camera logic ──
+  // ── Stop camera ──
   const stopCamera = useCallback(() => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
     }
+    setTorchOn(false);
+    setTorchSupported(false);
   }, []);
 
-  const startCamera = useCallback(async () => {
+  // ── Start camera ──
+  const startCamera = useCallback(async (facing: "user" | "environment") => {
     setCameraState("loading");
     setErrorMsg("");
     stopCamera();
@@ -47,13 +47,24 @@ export default function VerificationPage() {
         throw new Error("notsupported");
       }
 
-      // Most minimal constraint possible
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: facing } },
+        audio: false,
+      });
+
       streamRef.current = stream;
+
+      // Check torch support on the video track
+      const track = stream.getVideoTracks()[0];
+      if (track) {
+        const capabilities = track.getCapabilities?.();
+        if (capabilities && "torch" in capabilities) {
+          setTorchSupported(true);
+        }
+      }
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        // Let the browser handle play via autoPlay attribute
         setCameraState("ready");
       }
     } catch (err: unknown) {
@@ -80,14 +91,31 @@ export default function VerificationPage() {
     }
   }, [stopCamera]);
 
+  // ── Init camera ──
   useEffect(() => {
-    if (mode === "camera") {
-      startCamera();
-    } else {
-      stopCamera();
-    }
+    startCamera(facingMode);
     return stopCamera;
-  }, [mode, startCamera, stopCamera]);
+  }, [facingMode, startCamera, stopCamera]);
+
+  // ── Toggle torch/flashlight ──
+  const toggleTorch = useCallback(async () => {
+    if (!streamRef.current) return;
+    const track = streamRef.current.getVideoTracks()[0];
+    if (!track) return;
+
+    const newState = !torchOn;
+    try {
+      await track.applyConstraints({ advanced: [{ torch: newState } as MediaTrackConstraintSet] });
+      setTorchOn(newState);
+    } catch {
+      toast.error("No se pudo activar la linterna");
+    }
+  }, [torchOn]);
+
+  // ── Switch front/back camera ──
+  const switchCamera = () => {
+    setFacingMode((prev) => (prev === "user" ? "environment" : "user"));
+  };
 
   // ── Progress animation ──
   useEffect(() => {
@@ -98,8 +126,8 @@ export default function VerificationPage() {
     return () => clearInterval(interval);
   }, [processing]);
 
-  // ── Capture from camera ──
-  const handleCameraCapture = useCallback(async () => {
+  // ── Capture photo ──
+  const handleCapture = useCallback(async () => {
     if (!videoRef.current || !canvasRef.current || processing) return;
 
     const video = videoRef.current;
@@ -109,7 +137,8 @@ export default function VerificationPage() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    if (isMirrored) {
+    // Mirror for front camera
+    if (facingMode === "user") {
       ctx.translate(canvas.width, 0);
       ctx.scale(-1, 1);
     }
@@ -120,37 +149,6 @@ export default function VerificationPage() {
     );
     if (!blob) { toast.error("No se pudo capturar"); return; }
 
-    await sendToBackend(blob);
-  }, [processing, isMirrored]);
-
-  // ── File upload ──
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (!file.type.startsWith("image/")) {
-      toast.error("Selecciona una imagen válida");
-      return;
-    }
-
-    setSelectedFile(file);
-    setPreviewUrl(URL.createObjectURL(file));
-  };
-
-  const handleUploadCapture = async () => {
-    if (!selectedFile || processing) return;
-    await sendToBackend(selectedFile);
-  };
-
-  const clearUpload = () => {
-    setSelectedFile(null);
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    setPreviewUrl(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  };
-
-  // ── Send to backend ──
-  const sendToBackend = async (blob: Blob) => {
     setProcessing(true);
     const toastId = toast.loading("Verificando identidad...");
 
@@ -165,30 +163,12 @@ export default function VerificationPage() {
       toast.error(message, { id: toastId });
       setProcessing(false);
     }
-  };
-
-  // ── Main capture button handler ──
-  const handleMainButton = () => {
-    if (mode === "camera") handleCameraCapture();
-    else handleUploadCapture();
-  };
-
-  const canCapture =
-    (mode === "camera" && cameraState === "ready" && !processing) ||
-    (mode === "upload" && selectedFile !== null && !processing);
+  }, [processing, facingMode, router]);
 
   return (
     <main className="min-h-[100dvh] relative flex flex-col bg-white text-slate-800">
       <DecoratedBackground opacity={0.3} />
       <canvas ref={canvasRef} className="hidden" />
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*"
-        capture="user"
-        onChange={handleFileChange}
-        className="hidden"
-      />
 
       <div className="relative z-10 w-full max-w-md mx-auto px-4 sm:px-6 py-6 sm:py-8 flex flex-col flex-1">
         {/* Header */}
@@ -206,7 +186,7 @@ export default function VerificationPage() {
         </div>
 
         {/* Titles */}
-        <div className="text-center mb-4 sm:mb-6">
+        <div className="text-center mb-6 sm:mb-8">
           <h1 className="text-2xl sm:text-3xl font-bold text-[#0f172a] mb-1.5 tracking-tight">
             Verificación Facial
           </h1>
@@ -215,44 +195,18 @@ export default function VerificationPage() {
           </p>
         </div>
 
-        {/* Mode toggle */}
-        <div className="flex justify-center mb-4 sm:mb-6">
-          <div className="flex bg-slate-100 rounded-xl p-1 gap-1">
-            <button
-              onClick={() => { setMode("camera"); clearUpload(); }}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all ${
-                mode === "camera" ? "bg-white text-[#0f172a] shadow-sm" : "text-[#64748b]"
-              }`}
-            >
-              <Camera className="w-4 h-4" />
-              Cámara
-            </button>
-            <button
-              onClick={() => setMode("upload")}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all ${
-                mode === "upload" ? "bg-white text-[#0f172a] shadow-sm" : "text-[#64748b]"
-              }`}
-            >
-              <Upload className="w-4 h-4" />
-              Subir foto
-            </button>
-          </div>
-        </div>
-
         {/* Instructions */}
         <div className="flex flex-col items-center mb-4 sm:mb-6">
           <div className="w-14 h-14 sm:w-16 sm:h-16 bg-[#ebfcf1] rounded-full flex items-center justify-center mb-3">
             <User className="w-7 h-7 sm:w-8 sm:h-8 text-[#00a859]" />
           </div>
-          <h2 className="text-lg sm:text-xl font-bold text-[#0f172a]">
-            {mode === "camera" ? "Centra tu rostro" : "Sube una foto de tu rostro"}
-          </h2>
+          <h2 className="text-lg sm:text-xl font-bold text-[#0f172a]">Centra tu rostro</h2>
           <p className="text-[#64748b] text-xs sm:text-sm mt-1">
-            {mode === "camera" ? "Mantén una expresión neutral" : "JPG, PNG o WEBP"}
+            Mantén una expresión neutral
           </p>
         </div>
 
-        {/* Viewfinder Area */}
+        {/* Camera Area */}
         <div className="relative w-full aspect-square max-w-[280px] sm:max-w-[320px] mx-auto mb-6 sm:mb-8">
           {/* Corner brackets */}
           <div className="absolute -top-1 -left-1 w-7 h-7 sm:w-8 sm:h-8 border-t-4 border-l-4 border-[#00a859] rounded-tl-xl z-20" />
@@ -261,57 +215,28 @@ export default function VerificationPage() {
           <div className="absolute -bottom-1 -right-1 w-7 h-7 sm:w-8 sm:h-8 border-b-4 border-r-4 border-[#00a859] rounded-br-xl z-20" />
 
           <div className="absolute inset-2 bg-[#2a2d2f] rounded-2xl overflow-hidden flex items-center justify-center shadow-inner">
-
-            {/* ── CAMERA MODE ── */}
-            {mode === "camera" && (
+            {cameraState === "error" ? (
+              <div className="flex flex-col items-center gap-2 text-slate-400 px-4 text-center">
+                <Camera className="w-10 h-10 text-slate-500" />
+                <p className="text-xs leading-tight">{errorMsg}</p>
+                <button onClick={() => startCamera(facingMode)} className="mt-1 text-[#00a859] text-xs font-bold underline">
+                  Reintentar
+                </button>
+              </div>
+            ) : (
               <>
-                {cameraState === "error" ? (
-                  <div className="flex flex-col items-center gap-2 text-slate-400 px-4 text-center">
-                    <Camera className="w-10 h-10 text-slate-500" />
-                    <p className="text-xs leading-tight">{errorMsg}</p>
-                    <button onClick={startCamera} className="mt-1 text-[#00a859] text-xs font-bold underline">
-                      Reintentar
-                    </button>
-                    <button
-                      onClick={() => setMode("upload")}
-                      className="text-[#00a859] text-xs font-bold underline"
-                    >
-                      O sube una foto
-                    </button>
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="absolute inset-0 w-full h-full object-cover"
+                  style={{ transform: facingMode === "user" ? "scaleX(-1)" : "none" }}
+                />
+                {cameraState === "loading" && (
+                  <div className="absolute inset-0 bg-[#2a2d2f] flex items-center justify-center z-10">
+                    <Loader2 className="w-8 h-8 text-[#00a859] animate-spin" />
                   </div>
-                ) : (
-                  <>
-                    <video
-                      ref={videoRef}
-                      autoPlay
-                      playsInline
-                      muted
-                      className="absolute inset-0 w-full h-full object-cover"
-                      style={{ transform: isMirrored ? "scaleX(-1)" : "none" }}
-                    />
-                    {cameraState === "loading" && (
-                      <div className="absolute inset-0 bg-[#2a2d2f] flex items-center justify-center z-10">
-                        <Loader2 className="w-8 h-8 text-[#00a859] animate-spin" />
-                      </div>
-                    )}
-                  </>
-                )}
-              </>
-            )}
-
-            {/* ── UPLOAD MODE ── */}
-            {mode === "upload" && (
-              <>
-                {previewUrl ? (
-                  <img src={previewUrl} alt="Preview" className="absolute inset-0 w-full h-full object-cover" />
-                ) : (
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="flex flex-col items-center gap-3 text-slate-400 hover:text-slate-300 transition-colors"
-                  >
-                    <Upload className="w-12 h-12" />
-                    <span className="text-xs font-medium">Toca para seleccionar</span>
-                  </button>
                 )}
               </>
             )}
@@ -351,33 +276,31 @@ export default function VerificationPage() {
         )}
 
         {/* Hint */}
-        {!processing && (
+        {!processing && cameraState === "ready" && (
           <div className="mb-6 sm:mb-8 w-full max-w-[280px] sm:max-w-[320px] mx-auto text-center">
-            {mode === "camera" && cameraState === "ready" && (
-              <p className="text-xs sm:text-sm text-[#64748b]">Presiona el botón verde para verificar</p>
-            )}
-            {mode === "upload" && previewUrl && (
-              <button onClick={clearUpload} className="text-xs text-[#ef4444] font-semibold underline">
-                Cambiar foto
-              </button>
-            )}
+            <p className="text-xs sm:text-sm text-[#64748b]">Presiona el botón verde para verificar</p>
           </div>
         )}
 
         {/* Bottom Actions */}
         <div className="flex justify-center items-center gap-5 sm:gap-6 mt-auto pb-4">
+          {/* Torch / Flashlight */}
           <button
-            onClick={() => {
-              if (mode === "upload") fileInputRef.current?.click();
-            }}
-            className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-[#f8fafc] border border-slate-200 flex items-center justify-center text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-all shadow-sm active:scale-95"
+            onClick={toggleTorch}
+            disabled={!torchSupported || processing}
+            className={`w-12 h-12 sm:w-14 sm:h-14 rounded-full border flex items-center justify-center transition-all shadow-sm active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed ${
+              torchOn
+                ? "bg-[#fef9c3] border-[#facc15] text-[#a16207]"
+                : "bg-[#f8fafc] border-slate-200 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+            }`}
           >
-            {mode === "camera" ? <Sun className="w-5 h-5 sm:w-6 sm:h-6" /> : <Upload className="w-5 h-5 sm:w-6 sm:h-6" />}
+            <Sun className="w-5 h-5 sm:w-6 sm:h-6" />
           </button>
 
+          {/* Capture */}
           <button
-            onClick={handleMainButton}
-            disabled={!canCapture}
+            onClick={handleCapture}
+            disabled={cameraState !== "ready" || processing}
             className="rounded-full bg-[#00a859] flex items-center justify-center text-white hover:bg-[#00924d] active:scale-95 transition-all shadow-lg shadow-green-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ width: "4.5rem", height: "4.5rem" }}
           >
@@ -388,15 +311,13 @@ export default function VerificationPage() {
             )}
           </button>
 
+          {/* Switch camera */}
           <button
-            onClick={() => {
-              if (mode === "camera") setIsMirrored((p) => !p);
-              else clearUpload();
-            }}
+            onClick={switchCamera}
             disabled={processing}
             className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-[#f8fafc] border border-slate-200 flex items-center justify-center text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-all shadow-sm active:scale-95 disabled:opacity-50"
           >
-            <RefreshCcw className="w-5 h-5 sm:w-6 sm:h-6" />
+            <SwitchCamera className="w-5 h-5 sm:w-6 sm:h-6" />
           </button>
         </div>
       </div>
