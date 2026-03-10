@@ -2,13 +2,17 @@
 
 import { useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
-import { Database, Plus, Loader2, Upload, Users, Trash2, AlertTriangle } from "lucide-react";
+import { Database, Plus, Loader2, Upload, Users, Trash2, AlertTriangle, ChevronLeft, ChevronRight } from "lucide-react";
 import PersonCard from "@/components/PersonCard";
 import { getPersons, addPerson, deletePerson, deleteAllPersons } from "@/lib/api";
 import type { Person } from "@/types";
 
+const PAGE_SIZE = 20;
+
 export default function DatabasePage() {
   const [persons, setPersons] = useState<Person[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -21,10 +25,14 @@ export default function DatabasePage() {
   const [preview, setPreview] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const load = async () => {
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  const load = async (p = page) => {
     try {
-      const data = await getPersons();
-      setPersons(data);
+      const data = await getPersons(p, PAGE_SIZE);
+      setPersons(data.persons);
+      setTotal(data.total);
+      setPage(p);
     } catch {
       toast.error("Error cargando la base de datos");
     } finally {
@@ -58,7 +66,7 @@ export default function DatabasePage() {
       setFile(null);
       setPreview(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
-      await load();
+      await load(1);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error al agregar";
       toast.error(msg, { id: toastId });
@@ -72,7 +80,7 @@ export default function DatabasePage() {
     try {
       await deletePerson(id);
       toast.success("Persona eliminada");
-      setPersons((prev) => prev.filter((p) => p.id !== id));
+      await load();
     } catch {
       toast.error("Error al eliminar");
     } finally {
@@ -86,6 +94,8 @@ export default function DatabasePage() {
       const { deleted } = await deleteAllPersons();
       toast.success(`${deleted} persona(s) eliminadas`);
       setPersons([]);
+      setTotal(0);
+      setPage(1);
     } catch {
       toast.error("Error al borrar la base de datos");
     } finally {
@@ -189,10 +199,10 @@ export default function DatabasePage() {
             <div className="flex items-center gap-2 text-sm text-slate-400">
               <Users className="w-4 h-4" />
               <span>
-                {loading ? "Cargando..." : `${persons.length} persona${persons.length !== 1 ? "s" : ""} en la BD`}
+                {loading ? "Cargando..." : `${total} persona${total !== 1 ? "s" : ""} en la BD`}
               </span>
             </div>
-            {persons.length > 0 && !clearConfirm && (
+            {total > 0 && !clearConfirm && (
               <button
                 onClick={() => setClearConfirm(true)}
                 className="flex items-center gap-1.5 text-xs text-red-400 hover:text-red-300
@@ -205,7 +215,7 @@ export default function DatabasePage() {
             {clearConfirm && (
               <div className="flex items-center gap-2 bg-red-950/40 border border-red-800/50 rounded-xl px-3 py-2">
                 <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
-                <span className="text-xs text-red-300">¿Borrar {persons.length} persona(s)?</span>
+                <span className="text-xs text-red-300">¿Borrar {total} persona(s)?</span>
                 <button
                   onClick={handleClearAll}
                   disabled={clearingAll}
@@ -230,7 +240,7 @@ export default function DatabasePage() {
               <Loader2 className="w-6 h-6 animate-spin" />
               <span className="text-sm">Cargando...</span>
             </div>
-          ) : persons.length === 0 ? (
+          ) : persons.length === 0 && total === 0 ? (
             <div className="card p-10 flex flex-col items-center gap-3 text-slate-600">
               <Database className="w-12 h-12" />
               <p className="text-center text-sm">
@@ -240,16 +250,47 @@ export default function DatabasePage() {
               </p>
             </div>
           ) : (
-            <div className="space-y-2">
-              {persons.map((p) => (
-                <PersonCard
-                  key={p.id}
-                  person={p}
-                  onDelete={handleDelete}
-                  deleting={deletingId === p.id}
-                />
-              ))}
-            </div>
+            <>
+              <div className="space-y-2">
+                {persons.map((p) => (
+                  <PersonCard
+                    key={p.id}
+                    person={p}
+                    onDelete={handleDelete}
+                    deleting={deletingId === p.id}
+                  />
+                ))}
+              </div>
+
+              {/* Paginación */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-center gap-3 pt-2">
+                  <button
+                    onClick={() => load(page - 1)}
+                    disabled={page <= 1}
+                    className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-200
+                               border border-[#2a2a3e] hover:border-blue-500/50 px-3 py-1.5 rounded-lg
+                               transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <ChevronLeft className="w-3 h-3" />
+                    Anterior
+                  </button>
+                  <span className="text-xs text-slate-500">
+                    Página {page} de {totalPages}
+                  </span>
+                  <button
+                    onClick={() => load(page + 1)}
+                    disabled={page >= totalPages}
+                    className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-200
+                               border border-[#2a2a3e] hover:border-blue-500/50 px-3 py-1.5 rounded-lg
+                               transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    Siguiente
+                    <ChevronRight className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>

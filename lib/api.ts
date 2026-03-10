@@ -1,4 +1,4 @@
-import type { Person, CompareResponse, HistoryItem } from "@/types";
+import type { Person, PersonsResponse, CompareResponse, HistoryItem } from "@/types";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/+$/, "");
 
@@ -16,9 +16,9 @@ async function handleResponse<T>(res: Response): Promise<T> {
 
 // ─── Persons ─────────────────────────────────────────────────────────────────
 
-export async function getPersons(): Promise<Person[]> {
-  const res = await fetch(`${API_BASE}/api/persons`);
-  return handleResponse<Person[]>(res);
+export async function getPersons(page = 1, limit = 20): Promise<PersonsResponse> {
+  const res = await fetch(`${API_BASE}/api/persons?page=${page}&limit=${limit}`);
+  return handleResponse<PersonsResponse>(res);
 }
 
 export async function addPerson(name:string,photo:File): Promise<Person> {

@@ -6,6 +6,13 @@ export interface Person {
   has_embedding: boolean;
 }
 
+export interface PersonsResponse {
+  total: number;
+  page: number;
+  limit: number;
+  persons: Person[];
+}
+
 export interface MatchResult {
   person_id: number;
   name: string;

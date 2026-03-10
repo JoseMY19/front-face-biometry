@@ -125,19 +125,19 @@ export default function ComparisonResults({ data }: Props) {
             <span className="font-medium text-xs sm:text-sm">Detección</span>
           </div>
           <dl className="space-y-2 text-xs sm:text-sm">
-            <Attr
+            {/*<Attr
               label="Personas"
               value={String(data.detection.persons_count)}
-            />
+            />*/}
             <Attr
               label="Lentes"
               value={data.detection.has_glasses ? "Sí" : "No"}
               highlight={data.detection.has_glasses ? "amber" : undefined}
             />
-            <Attr
+            {/*<Attr
               label="Objetos"
               value={String(data.detection.total_objects)}
-            />
+            />*/}
           </dl>
         </div>
       </div>

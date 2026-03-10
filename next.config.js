@@ -2,12 +2,6 @@
   const nextConfig = {
     images: {
       remotePatterns: [
-        // Cloudinary (producción)
-        {
-          protocol: "https",
-          hostname: "res.cloudinary.com",
-          pathname: "/**",
-        },
         // Render backend (producción)
         {
           protocol: "https",
