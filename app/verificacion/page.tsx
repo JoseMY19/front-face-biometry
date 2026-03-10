@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, User, Sun, SwitchCamera, Fingerprint, Loader2, Camera } from "lucide-react";
+import { ArrowLeft, User, Sun, SwitchCamera, Loader2, Camera, Check } from "lucide-react";
 import DecoratedBackground from "@/components/DecoratedBackground";
 import logo from "@/src/assets/logo/logo.webp";
 import { useState, useRef, useCallback, useEffect } from "react";
@@ -11,12 +11,16 @@ import toast from "react-hot-toast";
 import { comparePhoto } from "@/lib/api";
 
 type CameraState = "loading" | "ready" | "error";
+type DetectionState = "searching" | "detected" | "countdown" | "captured";
 
 export default function VerificationPage() {
   const router = useRouter();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const detectorRef = useRef<unknown>(null);
+  const detectionLoopRef = useRef<number | null>(null);
+  const countdownRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [cameraState, setCameraState] = useState<CameraState>("loading");
   const [processing, setProcessing] = useState(false);
@@ -25,9 +29,20 @@ export default function VerificationPage() {
   const [facingMode, setFacingMode] = useState<"user" | "environment">("user");
   const [torchOn, setTorchOn] = useState(false);
   const [torchSupported, setTorchSupported] = useState(false);
+  const [detection, setDetection] = useState<DetectionState>("searching");
+  const [countdown, setCountdown] = useState(0);
+  const [faceGuide, setFaceGuide] = useState<string>("Buscando rostro...");
 
   // ── Stop camera ──
   const stopCamera = useCallback(() => {
+    if (detectionLoopRef.current) {
+      cancelAnimationFrame(detectionLoopRef.current);
+      detectionLoopRef.current = null;
+    }
+    if (countdownRef.current) {
+      clearTimeout(countdownRef.current);
+      countdownRef.current = null;
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
@@ -36,10 +51,116 @@ export default function VerificationPage() {
     setTorchSupported(false);
   }, []);
 
+  // ── Face detection loop ──
+  const startDetectionLoop = useCallback(() => {
+    // Use browser FaceDetector API (Chrome/Edge)
+    const FaceDetectorClass = (window as unknown as Record<string, unknown>).FaceDetector as
+      | (new (opts?: Record<string, unknown>) => { detect: (source: HTMLVideoElement) => Promise<Array<{ boundingBox: DOMRect }>> })
+      | undefined;
+
+    if (!FaceDetectorClass) {
+      // FaceDetector not supported — auto-capture after 3s
+      setFaceGuide("Centra tu rostro y espera...");
+      setDetection("detected");
+      let count = 3;
+      setCountdown(count);
+      setDetection("countdown");
+
+      const tick = () => {
+        count--;
+        if (count <= 0) {
+          setDetection("captured");
+          setCountdown(0);
+          return;
+        }
+        setCountdown(count);
+        countdownRef.current = setTimeout(tick, 1000);
+      };
+      countdownRef.current = setTimeout(tick, 1000);
+      return;
+    }
+
+    const detector = new FaceDetectorClass({ fastMode: true, maxDetectedFaces: 1 });
+    detectorRef.current = detector;
+
+    let stableFrames = 0;
+    const STABLE_THRESHOLD = 8; // ~8 frames of stable face = start countdown
+
+    const loop = async () => {
+      if (!videoRef.current || videoRef.current.readyState < 2) {
+        detectionLoopRef.current = requestAnimationFrame(loop);
+        return;
+      }
+
+      try {
+        const faces = await detector.detect(videoRef.current);
+
+        if (faces.length > 0) {
+          const face = faces[0];
+          const vw = videoRef.current.videoWidth;
+          const vh = videoRef.current.videoHeight;
+          const box = face.boundingBox;
+
+          // Check face is reasonably centered and sized
+          const centerX = (box.x + box.width / 2) / vw;
+          const centerY = (box.y + box.height / 2) / vh;
+          const faceRatio = (box.width * box.height) / (vw * vh);
+
+          const isCentered = centerX > 0.25 && centerX < 0.75 && centerY > 0.2 && centerY < 0.8;
+          const isGoodSize = faceRatio > 0.04; // Face covers at least 4% of frame
+
+          if (isCentered && isGoodSize) {
+            stableFrames++;
+            setDetection("detected");
+            setFaceGuide("Rostro detectado, no te muevas");
+
+            if (stableFrames >= STABLE_THRESHOLD) {
+              // Start countdown
+              setDetection("countdown");
+              let count = 3;
+              setCountdown(count);
+
+              const tick = () => {
+                count--;
+                if (count <= 0) {
+                  setDetection("captured");
+                  setCountdown(0);
+                  return;
+                }
+                setCountdown(count);
+                countdownRef.current = setTimeout(tick, 1000);
+              };
+              countdownRef.current = setTimeout(tick, 1000);
+              return; // Stop detection loop
+            }
+          } else {
+            stableFrames = Math.max(0, stableFrames - 2);
+            setDetection("searching");
+            if (!isCentered) setFaceGuide("Centra tu rostro en el recuadro");
+            else if (!isGoodSize) setFaceGuide("Acércate más a la cámara");
+          }
+        } else {
+          stableFrames = 0;
+          setDetection("searching");
+          setFaceGuide("Buscando rostro...");
+        }
+      } catch {
+        // Detection failed silently, retry
+      }
+
+      detectionLoopRef.current = requestAnimationFrame(loop);
+    };
+
+    detectionLoopRef.current = requestAnimationFrame(loop);
+  }, []);
+
   // ── Start camera ──
   const startCamera = useCallback(async (facing: "user" | "environment") => {
     setCameraState("loading");
     setErrorMsg("");
+    setDetection("searching");
+    setCountdown(0);
+    setFaceGuide("Buscando rostro...");
     stopCamera();
 
     try {
@@ -54,7 +175,6 @@ export default function VerificationPage() {
 
       streamRef.current = stream;
 
-      // Check torch support on the video track
       const track = stream.getVideoTracks()[0];
       if (track) {
         const capabilities = track.getCapabilities?.();
@@ -65,7 +185,10 @@ export default function VerificationPage() {
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        setCameraState("ready");
+        videoRef.current.onloadeddata = () => {
+          setCameraState("ready");
+          startDetectionLoop();
+        };
       }
     } catch (err: unknown) {
       console.error("Camera error:", err);
@@ -74,22 +197,16 @@ export default function VerificationPage() {
         msg = "Tu navegador no soporta acceso a la cámara.";
       } else if (err instanceof DOMException) {
         switch (err.name) {
-          case "NotAllowedError":
-            msg = "Permiso de cámara denegado.";
-            break;
-          case "NotFoundError":
-            msg = "No se encontró una cámara.";
-            break;
+          case "NotAllowedError": msg = "Permiso de cámara denegado."; break;
+          case "NotFoundError": msg = "No se encontró una cámara."; break;
           case "AbortError":
-          case "NotReadableError":
-            msg = "La cámara no respondió. Puede estar en uso por otra app.";
-            break;
+          case "NotReadableError": msg = "La cámara no respondió. Puede estar en uso por otra app."; break;
         }
       }
       setErrorMsg(msg);
       setCameraState("error");
     }
-  }, [stopCamera]);
+  }, [stopCamera, startDetectionLoop]);
 
   // ── Init camera ──
   useEffect(() => {
@@ -97,25 +214,11 @@ export default function VerificationPage() {
     return stopCamera;
   }, [facingMode, startCamera, stopCamera]);
 
-  // ── Toggle torch/flashlight ──
-  const toggleTorch = useCallback(async () => {
-    if (!streamRef.current) return;
-    const track = streamRef.current.getVideoTracks()[0];
-    if (!track) return;
-
-    const newState = !torchOn;
-    try {
-      await track.applyConstraints({ advanced: [{ torch: newState } as MediaTrackConstraintSet] });
-      setTorchOn(newState);
-    } catch {
-      toast.error("No se pudo activar la linterna");
-    }
-  }, [torchOn]);
-
-  // ── Switch front/back camera ──
-  const switchCamera = () => {
-    setFacingMode((prev) => (prev === "user" ? "environment" : "user"));
-  };
+  // ── Auto-capture when detection says "captured" ──
+  useEffect(() => {
+    if (detection !== "captured" || processing) return;
+    captureAndSend();
+  }, [detection]);
 
   // ── Progress animation ──
   useEffect(() => {
@@ -126,8 +229,8 @@ export default function VerificationPage() {
     return () => clearInterval(interval);
   }, [processing]);
 
-  // ── Capture photo ──
-  const handleCapture = useCallback(async () => {
+  // ── Capture and send ──
+  const captureAndSend = useCallback(async () => {
     if (!videoRef.current || !canvasRef.current || processing) return;
 
     const video = videoRef.current;
@@ -137,7 +240,6 @@ export default function VerificationPage() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Mirror for front camera
     if (facingMode === "user") {
       ctx.translate(canvas.width, 0);
       ctx.scale(-1, 1);
@@ -162,8 +264,38 @@ export default function VerificationPage() {
       const message = err instanceof Error ? err.message : "Error en la verificación";
       toast.error(message, { id: toastId });
       setProcessing(false);
+      // Restart detection
+      setDetection("searching");
+      setCountdown(0);
+      startDetectionLoop();
     }
-  }, [processing, facingMode, router]);
+  }, [processing, facingMode, router, startDetectionLoop]);
+
+  // ── Toggle torch ──
+  const toggleTorch = useCallback(async () => {
+    if (!streamRef.current) return;
+    const track = streamRef.current.getVideoTracks()[0];
+    if (!track) return;
+    const newState = !torchOn;
+    try {
+      await track.applyConstraints({ advanced: [{ torch: newState } as MediaTrackConstraintSet] });
+      setTorchOn(newState);
+    } catch {
+      toast.error("No se pudo activar la linterna");
+    }
+  }, [torchOn]);
+
+  // ── Switch camera ──
+  const switchCamera = () => {
+    setFacingMode((prev) => (prev === "user" ? "environment" : "user"));
+  };
+
+  // ── Border color based on detection state ──
+  const borderColor =
+    detection === "searching" ? "border-[#00a859]" :
+    detection === "detected" ? "border-[#facc15]" :
+    detection === "countdown" ? "border-[#22c55e]" :
+    "border-[#22c55e]";
 
   return (
     <main className="min-h-[100dvh] relative flex flex-col bg-white text-slate-800">
@@ -186,7 +318,7 @@ export default function VerificationPage() {
         </div>
 
         {/* Titles */}
-        <div className="text-center mb-6 sm:mb-8">
+        <div className="text-center mb-4 sm:mb-6">
           <h1 className="text-2xl sm:text-3xl font-bold text-[#0f172a] mb-1.5 tracking-tight">
             Verificación Facial
           </h1>
@@ -195,24 +327,37 @@ export default function VerificationPage() {
           </p>
         </div>
 
-        {/* Instructions */}
+        {/* Status indicator */}
         <div className="flex flex-col items-center mb-4 sm:mb-6">
-          <div className="w-14 h-14 sm:w-16 sm:h-16 bg-[#ebfcf1] rounded-full flex items-center justify-center mb-3">
-            <User className="w-7 h-7 sm:w-8 sm:h-8 text-[#00a859]" />
+          <div className={`w-14 h-14 sm:w-16 sm:h-16 rounded-full flex items-center justify-center mb-3 transition-colors duration-300 ${
+            detection === "searching" ? "bg-[#ebfcf1]" :
+            detection === "detected" ? "bg-[#fef9c3]" :
+            detection === "countdown" ? "bg-[#dcfce7]" :
+            "bg-[#dcfce7]"
+          }`}>
+            {detection === "countdown" ? (
+              <span className="text-2xl font-black text-[#16a34a]">{countdown}</span>
+            ) : detection === "captured" || processing ? (
+              <Check className="w-7 h-7 sm:w-8 sm:h-8 text-[#16a34a]" />
+            ) : (
+              <User className="w-7 h-7 sm:w-8 sm:h-8 text-[#00a859]" />
+            )}
           </div>
-          <h2 className="text-lg sm:text-xl font-bold text-[#0f172a]">Centra tu rostro</h2>
+          <h2 className="text-lg sm:text-xl font-bold text-[#0f172a]">
+            {processing ? "Analizando..." : detection === "countdown" ? "No te muevas" : "Centra tu rostro"}
+          </h2>
           <p className="text-[#64748b] text-xs sm:text-sm mt-1">
-            Mantén una expresión neutral
+            {processing ? "Verificando identidad" : faceGuide}
           </p>
         </div>
 
         {/* Camera Area */}
         <div className="relative w-full aspect-square max-w-[280px] sm:max-w-[320px] mx-auto mb-6 sm:mb-8">
-          {/* Corner brackets */}
-          <div className="absolute -top-1 -left-1 w-7 h-7 sm:w-8 sm:h-8 border-t-4 border-l-4 border-[#00a859] rounded-tl-xl z-20" />
-          <div className="absolute -top-1 -right-1 w-7 h-7 sm:w-8 sm:h-8 border-t-4 border-r-4 border-[#00a859] rounded-tr-xl z-20" />
-          <div className="absolute -bottom-1 -left-1 w-7 h-7 sm:w-8 sm:h-8 border-b-4 border-l-4 border-[#00a859] rounded-bl-xl z-20" />
-          <div className="absolute -bottom-1 -right-1 w-7 h-7 sm:w-8 sm:h-8 border-b-4 border-r-4 border-[#00a859] rounded-br-xl z-20" />
+          {/* Corner brackets - color changes with detection */}
+          <div className={`absolute -top-1 -left-1 w-7 h-7 sm:w-8 sm:h-8 border-t-4 border-l-4 ${borderColor} rounded-tl-xl z-20 transition-colors duration-300`} />
+          <div className={`absolute -top-1 -right-1 w-7 h-7 sm:w-8 sm:h-8 border-t-4 border-r-4 ${borderColor} rounded-tr-xl z-20 transition-colors duration-300`} />
+          <div className={`absolute -bottom-1 -left-1 w-7 h-7 sm:w-8 sm:h-8 border-b-4 border-l-4 ${borderColor} rounded-bl-xl z-20 transition-colors duration-300`} />
+          <div className={`absolute -bottom-1 -right-1 w-7 h-7 sm:w-8 sm:h-8 border-b-4 border-r-4 ${borderColor} rounded-br-xl z-20 transition-colors duration-300`} />
 
           <div className="absolute inset-2 bg-[#2a2d2f] rounded-2xl overflow-hidden flex items-center justify-center shadow-inner">
             {cameraState === "error" ? (
@@ -236,6 +381,15 @@ export default function VerificationPage() {
                 {cameraState === "loading" && (
                   <div className="absolute inset-0 bg-[#2a2d2f] flex items-center justify-center z-10">
                     <Loader2 className="w-8 h-8 text-[#00a859] animate-spin" />
+                  </div>
+                )}
+
+                {/* Countdown overlay */}
+                {detection === "countdown" && (
+                  <div className="absolute inset-0 flex items-center justify-center z-10">
+                    <div className="w-20 h-20 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center">
+                      <span className="text-4xl font-black text-white">{countdown}</span>
+                    </div>
                   </div>
                 )}
               </>
@@ -275,41 +429,41 @@ export default function VerificationPage() {
           </div>
         )}
 
-        {/* Hint */}
-        {!processing && cameraState === "ready" && (
-          <div className="mb-6 sm:mb-8 w-full max-w-[280px] sm:max-w-[320px] mx-auto text-center">
-            <p className="text-xs sm:text-sm text-[#64748b]">Presiona el botón verde para verificar</p>
-          </div>
-        )}
-
         {/* Bottom Actions */}
         <div className="flex justify-center items-center gap-5 sm:gap-6 mt-auto pb-4">
-          {/* Torch / Flashlight */}
+          {/* Torch */}
           <button
             onClick={toggleTorch}
             disabled={!torchSupported || processing}
             className={`w-12 h-12 sm:w-14 sm:h-14 rounded-full border flex items-center justify-center transition-all shadow-sm active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed ${
               torchOn
                 ? "bg-[#fef9c3] border-[#facc15] text-[#a16207]"
-                : "bg-[#f8fafc] border-slate-200 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                : "bg-[#f8fafc] border-slate-200 text-slate-500 hover:bg-slate-100"
             }`}
           >
             <Sun className="w-5 h-5 sm:w-6 sm:h-6" />
           </button>
 
-          {/* Capture */}
-          <button
-            onClick={handleCapture}
-            disabled={cameraState !== "ready" || processing}
-            className="rounded-full bg-[#00a859] flex items-center justify-center text-white hover:bg-[#00924d] active:scale-95 transition-all shadow-lg shadow-green-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
+          {/* Status indicator (replaces capture button) */}
+          <div
+            className={`rounded-full flex items-center justify-center text-white transition-all shadow-lg ${
+              processing ? "bg-[#00a859] shadow-green-500/30" :
+              detection === "countdown" ? "bg-[#22c55e] shadow-green-500/30 animate-pulse" :
+              detection === "detected" ? "bg-[#eab308] shadow-yellow-500/30" :
+              "bg-[#00a859]/60 shadow-green-500/20"
+            }`}
             style={{ width: "4.5rem", height: "4.5rem" }}
           >
             {processing ? (
               <Loader2 className="w-9 h-9 animate-spin" />
+            ) : detection === "countdown" ? (
+              <span className="text-2xl font-black">{countdown}</span>
+            ) : detection === "detected" ? (
+              <User className="w-9 h-9" />
             ) : (
-              <Fingerprint className="w-9 h-9 sm:w-10 sm:h-10" />
+              <User className="w-9 h-9 opacity-50" />
             )}
-          </button>
+          </div>
 
           {/* Switch camera */}
           <button
