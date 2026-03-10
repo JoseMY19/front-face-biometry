@@ -1,23 +1,29 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Toaster } from "react-hot-toast";
-import Navigation from "@/components/Navigation";
 
 export const metadata: Metadata = {
   title: "Biometría Facial",
-  description: "Reconocimiento facial con ArcFace, detección de lentes y análisis LLM",
+  description: "Sistema de verificación biométrica facial",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="es">
-      <body className="min-h-screen bg-[#0a0a0f] text-slate-200 antialiased">
-        <Navigation />
-        <main className="max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-8">{children}</main>
+      <body className="min-h-[100dvh] antialiased overscroll-none">
+        {children}
         <Toaster
-          position="top-right"
+          position="top-center"
           toastOptions={{
-            style: { background: "#1e1e2e", color: "#e2e8f0", border: "1px solid #334155" },
+            style: { background: "#1e293b", color: "#e2e8f0", border: "1px solid #334155", fontSize: "14px" },
           }}
         />
       </body>

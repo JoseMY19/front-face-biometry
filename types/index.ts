@@ -17,11 +17,16 @@ export interface MatchResult {
   person_id: number;
   name: string;
   photo_url: string;
-  cosine_similarity: number;
-  cosine_distance: number;
-  similarity_percentage: number;
-  euclidean_distance: number;
   is_match: boolean;
+  similarity_percentage: number;
+  model_scores?: {
+    arcface?: {
+      cosine_raw: number;
+      normalized_pct: number;
+      weight: number;
+    };
+  };
+  threshold_used?: number;
 }
 
 export interface FaceAnalysis {
@@ -33,16 +38,7 @@ export interface FaceAnalysis {
   error?: string;
 }
 
-export interface Detection {
-  class: string;
-  confidence_pct: number;
-  bbox: number[];
-}
-
 export interface DetectionData {
-  detections: Detection[];
-  persons_count: number;
-  total_objects: number;
   has_glasses: boolean;
   glasses_details?: {
     has_glasses: boolean;
@@ -50,7 +46,7 @@ export interface DetectionData {
     details: Array<{
       face_bbox: number[];
       has_glasses: boolean;
-      glasses_detections: number;
+      confidence: number;
     }>;
   };
 }
@@ -65,13 +61,4 @@ export interface CompareResponse {
   detection: DetectionData;
   llm_analysis: string;
   best_match: MatchResult | null;
-}
-
-export interface HistoryItem {
-  id: number;
-  query_photo_url: string;
-  best_match_name: string | null;
-  best_match_score: number | null;
-  has_glasses: boolean;
-  created_at: string;
 }

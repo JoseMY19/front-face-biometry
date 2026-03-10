@@ -1,6 +1,7 @@
- /** @type {import('next').NextConfig} */                                                                                                        
-  const nextConfig = {
-    images: {
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  devIndicators: false,
+  images: {
       remotePatterns: [
         // Render backend (producción)
         {
@@ -17,6 +18,6 @@
         },
       ],
     },
-  };
-  
-  module.exports = nextConfig;
+};
+
+module.exports = nextConfig;
