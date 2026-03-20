@@ -7,19 +7,61 @@ import { useState, useEffect } from "react";
 import { Check, X, RefreshCw, User, Shield, Clock } from "lucide-react";
 import DecoratedBackground from "@/components/DecoratedBackground";
 import logo from "@/src/assets/logo/logo.webp";
-import { photoUrl } from "@/lib/api";
+import { photoUrl, getEmpleadosByPhoto, getEmpleadoByDni } from "@/lib/api";
 import type { CompareResponse } from "@/types";
 
 export default function ResultPage() {
   const router = useRouter();
   const [result, setResult] = useState<CompareResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [empleado, setEmpleados] = useState<any>(null);
 
   useEffect(() => {
     const stored = sessionStorage.getItem("verificationResult");
     if (stored) {
       try {
-        setResult(JSON.parse(stored));
+        const parsed = JSON.parse(stored);
+        setResult(parsed);
+        // Buscar datos por DNI en Gestionate (más confiable que por nombre de archivo)
+        if (parsed.best_match?.dni) {
+          console.log("🔍 Buscando por DNI:", parsed.best_match.dni);
+          fetch(`${process.env.NEXT_PUBLIC_GESTIONATE_URL || 'http://localhost:3000'}/api/empleado/dni/${parsed.best_match.dni}`)
+            .then(r => r.json())
+            .then((emp: any) => {
+              console.log("📦 Datos de Gestionate:", emp);
+              // Extrae data si viene envuelto {message, data, statusCode}
+              const data = emp?.data ?? emp;
+              if (data?.nombres) {
+                setEmpleados({
+                  person_id: parsed.best_match.person_id,
+                  photo_url: parsed.best_match.photo_url,
+                  nombres: data.nombres,
+                  apellidos: data.apellidos,
+                  dni: data.dni,
+                  similarity_percentage: parsed.best_match.similarity_percentage
+                });
+              } else {
+                // Fallback a datos de Biometry
+                setEmpleados({
+                  person_id: parsed.best_match.person_id,
+                  photo_url: parsed.best_match.photo_url,
+                  name: parsed.best_match.name || "Sin nombre",
+                  dni: parsed.best_match.dni,
+                  similarity_percentage: parsed.best_match.similarity_percentage
+                });
+              }
+            })
+            .catch(() => {
+              // Si falla, mostrar datos de Biometry
+              setEmpleados({
+                person_id: parsed.best_match.person_id,
+                photo_url: parsed.best_match.photo_url,
+                name: parsed.best_match.name || "Sin nombre",
+                dni: parsed.best_match.dni,
+                similarity_percentage: parsed.best_match.similarity_percentage
+              });
+            });
+        }
       } catch {
         // Invalid data
       }
@@ -123,15 +165,15 @@ export default function ResultPage() {
               <div className="w-full mt-3 sm:mt-4 space-y-1.5 sm:space-y-2">
                 <div className="flex items-center justify-between py-2 border-b border-slate-100">
                   <span className="text-[10px] sm:text-xs font-medium text-[#64748b] uppercase tracking-wide">Nombre</span>
-                  <span className="text-xs sm:text-sm font-semibold text-[#0f172a]">{bestMatch.name}</span>
+                  <span className="text-xs sm:text-sm font-semibold text-[#0f172a]">{empleado?.nombres ?? empleado?.name ?? "-"}</span>
                 </div>
                 <div className="flex items-center justify-between py-2 border-b border-slate-100">
                   <span className="text-[10px] sm:text-xs font-medium text-[#64748b] uppercase tracking-wide">Apellido</span>
-                  <span className="text-xs sm:text-sm font-semibold text-[#94a3b8] italic">Pendiente API</span>
+                  <span className="text-xs sm:text-sm font-semibold text-[#94a3b8] italic">{empleado?.apellidos ?? "-"}</span>
                 </div>
                 <div className="flex items-center justify-between py-2 border-b border-slate-100">
                   <span className="text-[10px] sm:text-xs font-medium text-[#64748b] uppercase tracking-wide">DNI</span>
-                  <span className="text-xs sm:text-sm font-semibold text-[#94a3b8] italic">Pendiente API</span>
+                  <span className="text-xs sm:text-sm font-semibold text-[#94a3b8] italic">{empleado?.dni ?? "-"}</span>
                 </div>
               </div>
 

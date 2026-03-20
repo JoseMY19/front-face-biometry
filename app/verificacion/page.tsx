@@ -45,7 +45,15 @@ export default function VerificationPage() {
     stopCamera();
 
     try {
+      // Camera requires HTTPS or localhost
+      const isSecure = window.location.protocol === "https:" ||
+        window.location.hostname === "localhost" ||
+        window.location.hostname === "127.0.0.1";
+
       if (!navigator.mediaDevices?.getUserMedia) {
+        if (!isSecure) {
+          throw new Error("insecure");
+        }
         throw new Error("notsupported");
       }
 
@@ -70,7 +78,9 @@ export default function VerificationPage() {
       }
     } catch (err: unknown) {
       let msg = "No se pudo acceder a la cámara.";
-      if (err instanceof Error && err.message === "notsupported") {
+      if (err instanceof Error && err.message === "insecure") {
+        msg = `La cámara requiere HTTPS. Abre Chrome, ve a chrome://flags/#unsafely-treat-insecure-origin-as-secure, agrega ${window.location.origin} y reinicia Chrome.`;
+      } else if (err instanceof Error && err.message === "notsupported") {
         msg = "Tu navegador no soporta acceso a la cámara.";
       } else if (err instanceof DOMException) {
         switch (err.name) {

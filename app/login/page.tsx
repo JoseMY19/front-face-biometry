@@ -3,19 +3,34 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, Loader2 } from "lucide-react";
 import DecoratedBackground from "@/components/DecoratedBackground";
 import logo from "@/src/assets/logo/logo.webp";
+import { login } from "@/lib/api";
+import toast from "react-hot-toast";
 
 export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
-  const [email, setEmail] = useState("admin");
-  const [password, setPassword] = useState("admin");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Simulate navigation to the verification page
-    window.location.href = "/verificacion";
+    if (!email || !password) {
+      toast.error("Ingrese usuario y contraseña");
+      return;
+    }
+    setLoading(true);
+    try {
+      await login(email, password);
+      window.location.href = "/verificacion";
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Error al iniciar sesión";
+      toast.error(message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -42,7 +57,7 @@ export default function LoginPage() {
         <form onSubmit={handleSubmit} className="w-full space-y-4 sm:space-y-5">
           <div className="space-y-1.5">
             <label className="block text-sm font-bold text-[#0f172a]">
-              Correo
+              Usuario
             </label>
             <input
               type="text"
@@ -95,9 +110,17 @@ export default function LoginPage() {
 
           <button
             type="submit"
-            className="w-full bg-[#00a859] hover:bg-[#00924d] active:bg-[#007b41] text-white font-bold py-3 sm:py-3.5 rounded-xl transition-all shadow-lg shadow-green-500/20 active:scale-[0.98]"
+            disabled={loading}
+            className="w-full bg-[#00a859] hover:bg-[#00924d] active:bg-[#007b41] text-white font-bold py-3 sm:py-3.5 rounded-xl transition-all shadow-lg shadow-green-500/20 active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
-            Iniciar Sesión
+            {loading ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                Ingresando...
+              </>
+            ) : (
+              "Iniciar Sesión"
+            )}
           </button>
         </form>
       </div>
