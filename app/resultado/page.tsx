@@ -25,7 +25,7 @@ export default function ResultPage() {
         // Buscar datos por DNI en Gestionate (más confiable que por nombre de archivo)
         if (parsed.best_match?.dni) {
           console.log("🔍 Buscando por DNI:", parsed.best_match.dni);
-          fetch(`${process.env.NEXT_PUBLIC_GESTIONATE_URL || 'http://localhost:3000'}/api/empleado/dni/${parsed.best_match.dni}`)
+          fetch(`${process.env.NEXT_PUBLIC_GESTIONATE_URL || 'http://172.16.10.10:3000'}/api/empleado/dni/${parsed.best_match.dni}`)
             .then(r => r.json())
             .then((emp: any) => {
               console.log("📦 Datos de Gestionate:", emp);

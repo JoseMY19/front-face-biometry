@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, User, Sun, SwitchCamera, Fingerprint, Loader2, Camera, X } from "lucide-react";
+import { ArrowLeft, User, Sun, SwitchCamera, Loader2, Camera, X } from "lucide-react";
 import DecoratedBackground from "@/components/DecoratedBackground";
 import logo from "@/src/assets/logo/logo.webp";
 import { useState, useRef, useCallback, useEffect } from "react";
@@ -360,7 +360,7 @@ export default function VerificationPage() {
             {step === "processing" ? (
               <Loader2 className="w-9 h-9 animate-spin" />
             ) : (
-              <Fingerprint className="w-9 h-9 sm:w-10 sm:h-10" />
+              <Camera className="w-9 h-9 sm:w-10 sm:h-10" />
             )}
           </button>
 

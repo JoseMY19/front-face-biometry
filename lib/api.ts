@@ -11,11 +11,11 @@ function getApiBase(): string {
   if (typeof window !== "undefined") {
     return `${window.location.origin}/backend`;
   }
-  return "http://localhost:8000";
+  return "http://172.16.10.10:8000";
 }
 
 function getGestionateBase(): string {
-  const raw = process.env.NEXT_PUBLIC_GESTIONATE_URL ?? "http://localhost:3000";
+  const raw = process.env.NEXT_PUBLIC_GESTIONATE_URL ?? "http://172.16.10.10:3000";
   return raw.replace(/\/+$/, "");
 }
 
