@@ -53,10 +53,14 @@ export default function ResultPage() {
             })
             .catch(() => {
               // Si falla, mostrar datos de Biometry
+              const partes = (parsed.best_match.name || "").trim().split(" ");
+              const nombres = partes.slice(0, 2).join(" ");      // primeras 2 palabras
+              const apellidos = partes.slice(2).join(" ") || "-"; // resto
               setEmpleados({
                 person_id: parsed.best_match.person_id,
                 photo_url: parsed.best_match.photo_url,
-                name: parsed.best_match.name || "Sin nombre",
+                nombres: nombres,       // ← ahora usa el mismo campo
+                apellidos: apellidos,   // ← y este también
                 dni: parsed.best_match.dni,
                 similarity_percentage: parsed.best_match.similarity_percentage
               });
