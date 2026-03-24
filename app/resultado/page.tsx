@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
-import { Check, X, RefreshCw, User, Shield, Clock } from "lucide-react";
+import { Check, X, RefreshCw, User, Shield, Clock, AlertTriangle } from "lucide-react";
 import DecoratedBackground from "@/components/DecoratedBackground";
 import logo from "@/src/assets/logo/logo.webp";
 import { photoUrl, getEmpleadosByPhoto, getEmpleadoByDni } from "@/lib/api";
@@ -25,7 +25,7 @@ export default function ResultPage() {
         // Buscar datos por DNI en Gestionate (más confiable que por nombre de archivo)
         if (parsed.best_match?.dni) {
           console.log("🔍 Buscando por DNI:", parsed.best_match.dni);
-          fetch(`${process.env.NEXT_PUBLIC_GESTIONATE_URL || 'http://172.16.10.10:3000'}/api/empleado/dni/${parsed.best_match.dni}`)
+          fetch(`${process.env.NEXT_PUBLIC_GESTIONATE_URL || 'http://localhost:3000'}/api/empleado/dni/${parsed.best_match.dni}`)
             .then(r => r.json())
             .then((emp: any) => {
               console.log("📦 Datos de Gestionate:", emp);
@@ -188,6 +188,26 @@ export default function ResultPage() {
                 </div>
               </div>
             </div>
+
+            {/* Banner: ya se registró asistencia */}
+            {result?.gestionate?.already_registered && (
+              <div className="w-full mt-4 bg-amber-50 border border-amber-300 rounded-xl p-4 flex items-center gap-3">
+                <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0" />
+                <span className="text-amber-800 text-sm font-semibold">
+                  Ya se registró su asistencia hoy
+                </span>
+              </div>
+            )}
+
+            {/* Banner: asistencia registrada exitosamente */}
+            {result?.gestionate && !result.gestionate.already_registered && !result.gestionate.error && (
+              <div className="w-full mt-4 bg-green-50 border border-green-300 rounded-xl p-4 flex items-center gap-3">
+                <Check className="w-5 h-5 text-green-600 flex-shrink-0" />
+                <span className="text-green-800 text-sm font-semibold">
+                  Asistencia registrada correctamente
+                </span>
+              </div>
+            )}
 
             <div className="w-full mt-6 sm:mt-8 space-y-2.5 sm:space-y-3">
               <button

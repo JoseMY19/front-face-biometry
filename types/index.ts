@@ -51,6 +51,18 @@ export interface DetectionData {
   };
 }
 
+export interface GestionateResult {
+  already_registered: boolean;
+  message?: string;
+  registrado?: boolean;
+  nombres?: string;
+  apellidos?: string;
+  dni?: string;
+  estado?: string;
+  error?: string;
+}
+
+
 export interface CompareResponse {
   comparison_id: number;
   query_photo_url: string;
@@ -61,4 +73,5 @@ export interface CompareResponse {
   detection: DetectionData;
   llm_analysis: string;
   best_match: MatchResult | null;
+  gestionate?: GestionateResult | null;
 }
