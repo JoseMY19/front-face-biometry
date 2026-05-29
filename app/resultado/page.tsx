@@ -163,7 +163,9 @@ export default function ResultPage() {
               </div>
 
               <h3 className="font-bold text-[#0f172a] text-base sm:text-lg">
-                {bestMatch.name}
+                {empleado?.nombres && empleado?.apellidos
+                  ? `${empleado.nombres} ${empleado.apellidos}`
+                  : empleado?.nombres ?? bestMatch.name}
               </h3>
 
               <div className="w-full mt-3 sm:mt-4 space-y-1.5 sm:space-y-2">
